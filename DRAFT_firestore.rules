@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+
+    // Role helpers
+    function isAdvisor(classroomId, uid) {
+      return get(/databases/$(database)/documents/classrooms/$(classroomId)).data.advisorId == uid;
+    }
+    
+    function isCR(classroomId, uid) {
+      return get(/databases/$(database)/documents/classrooms/$(classroomId)/members/$(uid)).data.role == 'cr';
+    }
+
+    function isMember(classroomId, uid) {
+      return exists(/databases/$(database)/documents/classrooms/$(classroomId)/members/$(uid));
+    }
+
+    // User Profile
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role']) && data.keys().size() == 4
+        && data.uid is string && data.uid.size() <= 128 && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && data.name is string && data.name.size() <= 128
+        && data.role is string && data.role in ['student', 'cr', 'faculty', 'advisor'];
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming());
+      
+      // Allow users to update their own profile
+      allow update: if isSignedIn() && userId == request.auth.uid 
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name'])
+        && incoming().name is string && incoming().name.size() <= 128;
+    }
+
+    // Classroom
+    function isValidClassroom(data) {
+      return data.keys().hasAll(['id', 'joinCode', 'name', 'advisorId', 'createdAt']) 
+        && (data.keys().size() == 5 || data.keys().size() == 6)
+        && data.id is string && data.id.size() == 10
+        && data.joinCode is string && data.joinCode == data.id
+        && data.name is string && data.name.size() <= 128
+        && data.advisorId is string && data.advisorId == request.auth.uid
+        && data.createdAt is number && data.createdAt == request.time.toMillis()
+        && (!('driveFolderLink' in data) || (data.driveFolderLink is string && data.driveFolderLink.size() <= 256));
+    }
+
+    match /classrooms/{classroomId} {
+      allow get: if isSignedIn() && isValidId(classroomId);
+      allow list: if isSignedIn() && resource.data.advisorId == request.auth.uid; // Advisors can list their classrooms
+      
+      allow create: if isSignedIn() && isValidId(classroomId) && isValidClassroom(incoming());
+      
+      // Advisor can update name, driveFolderLink. CR can update driveFolderLink.
+      allow update: if isSignedIn() && isValidId(classroomId) && (
+        (isAdvisor(classroomId, request.auth.uid) && incoming().diff(existing()).affectedKeys().hasAny(['name', 'driveFolderLink'])) ||
+        (isCR(classroomId, request.auth.uid) && incoming().diff(existing()).affectedKeys().hasOnly(['driveFolderLink']))
+      )
+      && (!('name' in incoming().diff(existing()).affectedKeys()) || (incoming().name is string && incoming().name.size() <= 128))
+      && (!('driveFolderLink' in incoming().diff(existing()).affectedKeys()) || (incoming().driveFolderLink is string && incoming().driveFolderLink.size() <= 256));
+    }
+
+    // ClassroomMember
+    function isValidMember(data, memberId, classroomId) {
+      return data.keys().hasAll(['classroomId', 'userId', 'role', 'joinedAt']) && data.keys().size() == 4
+        && data.classroomId is string && data.classroomId == classroomId
+        && data.userId is string && data.userId == memberId
+        && data.role is string && data.role in ['student', 'cr', 'faculty']
+        && data.joinedAt is number && data.joinedAt == request.time.toMillis();
+    }
+
+    match /classrooms/{classroomId}/members/{memberId} {
+      allow get: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) && (memberId == request.auth.uid || isMember(classroomId, request.auth.uid));
+      allow list: if isSignedIn() && isValidId(classroomId) && isMember(classroomId, request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) && memberId == request.auth.uid
+        && isValidMember(incoming(), memberId, classroomId)
+        && incoming().role in ['student', 'faculty'];
+        
+      allow update: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) 
+        && isAdvisor(classroomId, request.auth.uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['role'])
+        && incoming().role in ['student', 'cr'];
+        
+      allow delete: if isSignedIn() && isValidId(classroomId) && isValidId(memberId)
+        && (memberId == request.auth.uid || isAdvisor(classroomId, request.auth.uid));
+    }
+
+    // Evaluation
+    function isValidEvaluation(data, evalId, classroomId) {
+      return data.keys().hasAll(['id', 'classroomId', 'subject', 'marks', 'date', 'createdBy', 'createdAt'])
+        && (data.keys().size() >= 7 && data.keys().size() <= 9)
+        && data.id is string && data.id == evalId
+        && data.classroomId is string && data.classroomId == classroomId
+        && data.subject is string && data.subject.size() <= 128 && data.subject.size() > 0
+        && data.marks is number && data.marks >= 0 && data.marks <= 1000
+        && data.date is number 
+        && (!('type' in data) || (data.type is string && data.type.size() <= 64))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1024))
+        && data.createdBy is string && data.createdBy == request.auth.uid
+        && data.createdAt is number && data.createdAt == request.time.toMillis();
+    }
+
+    function isValidEvaluationUpdate(data, evalId, classroomId) {
+      return data.keys().hasAll(['id', 'classroomId', 'subject', 'marks', 'date', 'createdBy', 'createdAt'])
+        && data.id is string && data.id == evalId
+        && data.classroomId is string && data.classroomId == classroomId
+        && data.subject is string && data.subject.size() <= 128 && data.subject.size() > 0
+        && data.marks is number && data.marks >= 0 && data.marks <= 1000
+        && data.date is number 
+        && (!('type' in data) || (data.type is string && data.type.size() <= 64))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1024))
+        && data.createdBy is string
+        && data.createdAt is number;
+    }
+
+    match /classrooms/{classroomId}/evaluations/{evaluationId} {
+      allow get: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId) && isMember(classroomId, request.auth.uid);
+      allow list: if isSignedIn() && isValidId(classroomId) && isMember(classroomId, request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId)
+        && isCR(classroomId, request.auth.uid)
+        && isValidEvaluation(incoming(), evaluationId, classroomId);
+        
+      allow update: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId)
+        && isCR(classroomId, request.auth.uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['subject', 'marks', 'date', 'type', 'description'])
+        && isValidEvaluationUpdate(incoming(), evaluationId, classroomId);
+        
+      allow delete: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId)
+        && isCR(classroomId, request.auth.uid);
+    }
+  }
+}

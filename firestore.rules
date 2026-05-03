@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { 
+      return request.auth != null; 
+    }
+
+    function isEmailVerified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    // Role helpers
+    function isAdvisor(classroomId, uid) {
+      return exists(/databases/$(database)/documents/classrooms/$(classroomId)) && 
+             get(/databases/$(database)/documents/classrooms/$(classroomId)).data.advisorId == uid;
+    }
+
+    function isCR(classroomId, uid) {
+      return exists(/databases/$(database)/documents/classrooms/$(classroomId)/members/$(uid)) &&
+             get(/databases/$(database)/documents/classrooms/$(classroomId)/members/$(uid)).data.role == 'cr';
+    }
+
+    function canManageEvaluations(classroomId, uid) {
+      return isAdvisor(classroomId, uid) || isCR(classroomId, uid);
+    }
+
+    function isMember(classroomId, uid) {
+      return exists(/databases/$(database)/documents/classrooms/$(classroomId)/members/$(uid));
+    }
+
+    // User Profile
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role'])
+        && data.uid is string && data.uid.size() <= 128 && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && data.name is string && data.name.size() <= 128
+        && data.role is string && data.role in ['student', 'cr', 'faculty', 'advisor'];
+    }
+
+    match /test/connection {
+      allow get: if true;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
+      
+      // Allow users to update their own profile
+      allow update: if isSignedIn() && userId == request.auth.uid 
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name'])
+        && incoming().name is string && incoming().name.size() <= 128;
+    }
+
+    // Classroom
+    function isValidClassroom(data, classroomId) {
+      return data.keys().hasAll(['id', 'joinCode', 'name', 'advisorId', 'createdAt']) 
+        && data.name is string && data.name.size() <= 128
+        && data.advisorId == request.auth.uid;
+    }
+
+    function isValidClassroomUpdate(data) {
+      return data.keys().hasAll(['id', 'joinCode', 'name', 'advisorId', 'createdAt']) 
+        && data.name is string && data.name.size() <= 128;
+    }
+
+    match /classrooms/{classroomId} {
+      allow get: if isSignedIn() && isValidId(classroomId);
+      allow list: if isSignedIn(); 
+      
+      allow create: if isSignedIn() && isValidId(classroomId) && isValidClassroom(incoming(), classroomId);
+      
+      allow update: if isSignedIn() && isValidId(classroomId) && isValidClassroomUpdate(incoming()) && (
+        (isAdvisor(classroomId, request.auth.uid) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'driveFolderLink'])) ||
+        (canManageEvaluations(classroomId, request.auth.uid) && incoming().diff(existing()).affectedKeys().hasOnly(['driveFolderLink']))
+      );
+    }
+
+    // ClassroomMember
+    function isValidMember(data, memberId, classroomId) {
+      return data.keys().hasAll(['classroomId', 'userId', 'role', 'joinedAt'])
+        && data.classroomId == classroomId
+        && data.userId == memberId
+        && data.role in ['student', 'cr', 'faculty'];
+    }
+
+    function isValidMemberUpdate(data, memberId, classroomId) {
+      return data.keys().hasAll(['classroomId', 'userId', 'role', 'joinedAt'])
+        && data.role in ['student', 'cr'];
+    }
+
+    match /classrooms/{classroomId}/members/{memberId} {
+      allow get: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) && (memberId == request.auth.uid || isMember(classroomId, request.auth.uid));
+      allow list: if isSignedIn() && isValidId(classroomId) && isMember(classroomId, request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) && memberId == request.auth.uid
+        && isValidMember(incoming(), memberId, classroomId)
+        && incoming().role in ['student', 'faculty']; // only students or faculty can join directly
+        
+      allow update: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) 
+        && isAdvisor(classroomId, request.auth.uid)
+        && isValidMemberUpdate(incoming(), memberId, classroomId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['role']);
+        
+      allow delete: if isSignedIn() && isValidId(classroomId) && isValidId(memberId)
+        && (memberId == request.auth.uid || isAdvisor(classroomId, request.auth.uid));
+    }
+
+    // Evaluation
+    function isValidEvaluation(data, evalId, classroomId) {
+      return data.keys().hasAll(['id', 'classroomId', 'subject', 'marks', 'date', 'createdBy', 'createdAt'])
+        && data.id == evalId
+        && data.classroomId == classroomId
+        && data.subject is string && data.subject.size() > 0
+        && data.marks is number
+        && data.createdBy == request.auth.uid;
+    }
+
+    function isValidEvaluationUpdate(data, evalId, classroomId) {
+      return data.keys().hasAll(['id', 'classroomId', 'subject', 'marks', 'date', 'createdBy', 'createdAt'])
+        && data.id == evalId
+        && data.classroomId == classroomId
+        && data.subject is string && data.subject.size() > 0
+        && data.marks is number;
+    }
+
+    match /classrooms/{classroomId}/evaluations/{evaluationId} {
+      allow get: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId) && isMember(classroomId, request.auth.uid);
+      allow list: if isSignedIn() && isValidId(classroomId) && isMember(classroomId, request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId)
+        && canManageEvaluations(classroomId, request.auth.uid)
+        && isValidEvaluation(incoming(), evaluationId, classroomId);
+        
+      allow update: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId)
+        && canManageEvaluations(classroomId, request.auth.uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['subject', 'marks', 'date', 'type', 'description'])
+        && isValidEvaluationUpdate(incoming(), evaluationId, classroomId);
+        
+      allow delete: if isSignedIn() && isValidId(classroomId) && isValidId(evaluationId)
+        && canManageEvaluations(classroomId, request.auth.uid);
+    }
+  }
+}

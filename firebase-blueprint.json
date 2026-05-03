@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "cr", "faculty", "advisor"] }
+      },
+      "required": ["uid", "email", "name", "role"]
+    },
+    "Classroom": {
+      "title": "Classroom",
+      "description": "A classroom containing evaluations and students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "joinCode": { "type": "string", "description": "10 digit unique code" },
+        "name": { "type": "string" },
+        "advisorId": { "type": "string" },
+        "driveFolderLink": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "joinCode", "name", "advisorId", "createdAt"]
+    },
+    "ClassroomMember": {
+      "title": "ClassroomMember",
+      "description": "User's membership in a classroom",
+      "type": "object",
+      "properties": {
+        "classroomId": { "type": "string" },
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "cr", "faculty"] },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["classroomId", "userId", "role", "joinedAt"]
+    },
+    "Evaluation": {
+      "title": "Evaluation",
+      "description": "An evaluation/test in a classroom",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "classroomId": { "type": "string" },
+        "subject": { "type": "string" },
+        "marks": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "classroomId", "subject", "marks", "date", "createdBy", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "/classrooms/{classroomId}": {
+      "schema": { "$ref": "#/entities/Classroom" },
+      "description": "Classroom details"
+    },
+    "/classrooms/{classroomId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/ClassroomMember" },
+      "description": "Members of a classroom (CRs, Students, Faculty)"
+    },
+    "/classrooms/{classroomId}/evaluations/{evaluationId}": {
+      "schema": { "$ref": "#/entities/Evaluation" },
+      "description": "Evaluations in the classroom"
+    }
+  }
+}
