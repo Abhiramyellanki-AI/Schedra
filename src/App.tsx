@@ -6,8 +6,6 @@ import Dashboard from './pages/Dashboard';
 import JoinClassroom from './pages/JoinClassroom';
 import { testConnection } from './lib/firebase';
 
-testConnection();
-
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user } = useAuth();
   if (!user) return <Navigate to="/" />;
@@ -15,6 +13,10 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 };
 
 export default function App() {
+  React.useEffect(() => {
+    testConnection();
+  }, []);
+
   return (
     <AuthProvider>
       <BrowserRouter>

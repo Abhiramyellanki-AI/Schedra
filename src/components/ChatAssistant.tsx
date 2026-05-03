@@ -1,20 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
+import Groq from 'groq-sdk';
 import { db, handleFirestoreError, OperationType, Timestamp } from '../lib/firebase';
 import { collection, query, getDocs } from 'firebase/firestore';
 import { Send, Bot, User, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let groqClient: Groq | null = null;
+
+const getGroqClient = () => {
+  if (groqClient) return groqClient;
+  const apiKey = (import.meta as any).env.VITE_GROQ_API_KEY;
+  if (!apiKey) return null;
+  
+  groqClient = new Groq({
+    apiKey,
+    dangerouslyAllowBrowser: true
+  });
+  return groqClient;
+};
 
 interface Message {
-  role: 'user' | 'model';
+  role: 'user' | 'assistant';
   content: string;
 }
 
 export default function ChatAssistant({ classroomId }: { classroomId: string }) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'model', content: "Hello! I'm Schedra's AI assistant. Ask me anything about your upcoming evaluations, schedule, or subjects." }
+    { role: 'assistant', content: "Hello! I'm Schedra's AI assistant. Ask me anything about your upcoming evaluations, schedule, or subjects." }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -44,31 +56,39 @@ export default function ChatAssistant({ classroomId }: { classroomId: string }) 
         return `- Subject: ${e.subject}, Marks: ${e.marks}, Date: ${dateVal.toLocaleString()}, Type: ${e.type || 'Exam'} ${e.description ? `(Info: ${e.description})` : ''}`;
       }).join("\n") || "No evaluations scheduled currently.";
 
-      const model = ai.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        systemInstruction: `You are a helpful AI assistant for a classroom productivity app called "Schedra". 
+      const systemPrompt = `You are a helpful AI assistant for a classroom productivity app called "Schedra". 
 Your job is to answer the student's questions accurately based ONLY on the classroom data provided below.
 If the answer is not in the data, state that you don't know based on the current schedule.
 Current date/time: ${new Date().toLocaleString()}
 
 Here is the current classroom evaluations schedule:
-${calendarContext}`
-      });
+${calendarContext}`;
 
-      const chat = model.startChat({
-        history: messages.slice(1).map(m => ({
-          role: m.role,
-          parts: [{ text: m.content }],
-        })),
-      });
+      const client = getGroqClient();
+      if (!client) {
+        setMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: "The GROQ API key is not configured. Please add `VITE_GROQ_API_KEY` to your environment variables to use the AI assistant." 
+        }]);
+        setIsLoading(false);
+        return;
+      }
 
-      const result = await chat.sendMessage(userQuery);
-      const response = await result.response;
-      const answer = response.text() || "I'm sorry, I couldn't generate a response.";
-      setMessages(prev => [...prev, { role: 'model', content: answer }]);
+      const chatCompletion = await client.chat.completions.create({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages.map(m => ({ role: m.role, content: m.content })),
+          { role: 'user', content: userQuery }
+        ],
+        model: 'llama-3.3-70b-versatile',
+        temperature: 0.2,
+      });
+      
+      const answer = chatCompletion.choices[0]?.message?.content || "I'm sorry, I couldn't generate a response.";
+      setMessages(prev => [...prev, { role: 'assistant', content: answer }]);
     } catch (error) {
       console.error(error);
-      setMessages(prev => [...prev, { role: 'model', content: "Sorry, I ran into an error connecting to my brain. Please try again later." }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I ran into an error connecting to my brain. Please check if the GROQ API key is set correctly." }]);
     } finally {
       setIsLoading(false);
     }
@@ -83,7 +103,7 @@ ${calendarContext}`
           </div>
           <div>
             <h3 className="font-semibold text-white">Schedra AI</h3>
-            <p className="text-xs text-slate-400">Powered by Gemini</p>
+            <p className="text-xs text-slate-400">Powered by Groq</p>
           </div>
         </div>
       </div>
