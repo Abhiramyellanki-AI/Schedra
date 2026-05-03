@@ -103,7 +103,7 @@ service cloud.firestore {
       
       allow create: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) && memberId == request.auth.uid
         && isValidMember(incoming(), memberId, classroomId)
-        && incoming().role in ['student', 'faculty']; // only students or faculty can join directly
+        && incoming().role in ['student', 'faculty', 'cr']; // students, faculty, or CRs can join directly
         
       allow update: if isSignedIn() && isValidId(classroomId) && isValidId(memberId) 
         && isAdvisor(classroomId, request.auth.uid)

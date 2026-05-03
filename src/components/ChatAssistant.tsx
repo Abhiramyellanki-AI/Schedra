@@ -95,7 +95,7 @@ ${calendarContext}`;
   };
 
   return (
-    <div className="glass-panel flex flex-col h-full border-white/10 relative overflow-hidden">
+    <div className="flex flex-col h-full relative overflow-hidden">
       <div className="p-6 border-b border-white/5 bg-white/5 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
