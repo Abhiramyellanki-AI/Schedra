@@ -44,30 +44,27 @@ export default function ChatAssistant({ classroomId }: { classroomId: string }) 
         return `- Subject: ${e.subject}, Marks: ${e.marks}, Date: ${dateVal.toLocaleString()}, Type: ${e.type || 'Exam'} ${e.description ? `(Info: ${e.description})` : ''}`;
       }).join("\n") || "No evaluations scheduled currently.";
 
-      // 2. Build system instruction
-      const systemInstruction = `You are a helpful AI assistant for a classroom productivity app called "Schedra". 
+      const model = ai.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        systemInstruction: `You are a helpful AI assistant for a classroom productivity app called "Schedra". 
 Your job is to answer the student's questions accurately based ONLY on the classroom data provided below.
 If the answer is not in the data, state that you don't know based on the current schedule.
 Current date/time: ${new Date().toLocaleString()}
 
 Here is the current classroom evaluations schedule:
-${calendarContext}`;
-
-      // 3. Format previous messages for chat history
-      // The GenAI SDK supports chat sessions, but for simplicity we can just pass the formatted history as contents
-      const chatHistoryText = messages.map(m => `${m.role === 'user' ? 'Student' : 'Assistant'}: ${m.content}`).join("\n");
-      const fullPrompt = `${chatHistoryText}\nStudent: ${userQuery}\nAssistant:`;
-
-      const result = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: fullPrompt,
-        config: {
-          systemInstruction,
-          temperature: 0.2, // Low temp for factual answers
-        }
+${calendarContext}`
       });
-      
-      const answer = result.text || "I'm sorry, I couldn't generate a response.";
+
+      const chat = model.startChat({
+        history: messages.slice(1).map(m => ({
+          role: m.role,
+          parts: [{ text: m.content }],
+        })),
+      });
+
+      const result = await chat.sendMessage(userQuery);
+      const response = await result.response;
+      const answer = response.text() || "I'm sorry, I couldn't generate a response.";
       setMessages(prev => [...prev, { role: 'model', content: answer }]);
     } catch (error) {
       console.error(error);

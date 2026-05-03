@@ -69,7 +69,7 @@ export default function EvaluationsSection({ isCR, classroomId }: { isCR: boolea
       const evalId = Math.random().toString(36).substring(2, 15);
       const evalRef = doc(db, `classrooms/${classroomId}/evaluations`, evalId);
       
-      const payload: Evaluation = {
+      const payload: any = {
         id: evalId,
         classroomId,
         subject,
